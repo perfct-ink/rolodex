@@ -23,21 +23,11 @@ struct ContactListView: View {
         .navigationTitle(title)
         .toolbar {
             ToolbarItemGroup {
-                BulkGroupAssignMenu()
-                    .disabled(viewModel.selectedContactIDs.isEmpty)
                 Button {
                     isPresentingNewContact = true
                 } label: {
                     Label("New Contact", systemImage: "person.crop.circle.badge.plus")
                 }
-                Menu {
-                    Button("Delete", role: .destructive) {
-                        viewModel.deleteSelectedContacts()
-                    }
-                } label: {
-                    Label("More", systemImage: "ellipsis.circle")
-                }
-                .disabled(viewModel.selectedContactIDs.isEmpty)
             }
         }
         .sheet(isPresented: $isPresentingNewContact) {

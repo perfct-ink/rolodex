@@ -80,6 +80,20 @@ final class ContactsService: @unchecked Sendable {
         CNContactThumbnailImageDataKey as CNKeyDescriptor,
     ]
 
+    // Fields shown in the detail view. Fetched per contact on demand so they
+    // don't slow down loading the whole list. Notes are omitted: reading them
+    // needs a restricted entitlement.
+    static let extraKeysToFetch: [CNKeyDescriptor] = [
+        CNContactNicknameKey as CNKeyDescriptor,
+        CNContactDepartmentNameKey as CNKeyDescriptor,
+        CNContactUrlAddressesKey as CNKeyDescriptor,
+        CNContactBirthdayKey as CNKeyDescriptor,
+        CNContactDatesKey as CNKeyDescriptor,
+        CNContactRelationsKey as CNKeyDescriptor,
+        CNContactSocialProfilesKey as CNKeyDescriptor,
+        CNContactInstantMessageAddressesKey as CNKeyDescriptor,
+    ]
+
     func fetchSnapshot() async throws -> ContactsSnapshot {
         try await ioQueue.run { [self] in
             let groups = try fetchGroups()
@@ -87,6 +101,12 @@ final class ContactsService: @unchecked Sendable {
                 contacts: fetchAllContacts(), groups: groups,
                 membership: fetchMembership(for: groups)
             )
+        }
+    }
+
+    func fetchExtraFields(identifier: String) async throws -> CNContact {
+        try await ioQueue.run { [self] in
+            try store.unifiedContact(withIdentifier: identifier, keysToFetch: Self.extraKeysToFetch)
         }
     }
 
@@ -237,10 +257,17 @@ final class ContactsService: @unchecked Sendable {
         }
     }
 
-    func update(_ contact: CNMutableContact) async throws {
+    // Edits a freshly fetched copy with every editable key, so the caller can
+    // touch any field without hitting an unfetched property.
+    func updateContact(identifier: String, _ apply: @escaping (CNMutableContact) -> Void) async throws {
         try await ioQueue.run { [self] in
+            let fetched = try store.unifiedContact(
+                withIdentifier: identifier, keysToFetch: Self.keysToFetch + Self.extraKeysToFetch
+            )
+            guard let mutable = fetched.mutableCopy() as? CNMutableContact else { return }
+            apply(mutable)
             let request = CNSaveRequest()
-            request.update(contact)
+            request.update(mutable)
             try store.execute(request)
         }
     }

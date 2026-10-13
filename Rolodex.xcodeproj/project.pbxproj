@@ -10,6 +10,12 @@
 		0A1D7C55BF5A614FA36A4225 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C056EA3E47C2DFCDD368FAD /* SidebarView.swift */; };
 			AF0000000000000000000002 /* ContactAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000001 /* ContactAvatarView.swift */; };
 			AF0000000000000000000004 /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000003 /* FlowLayout.swift */; };
+			AF0000000000000000000007 /* ContactMapPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000006 /* ContactMapPane.swift */; };
+			AF0000000000000000000011 /* UndoCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000010 /* UndoCommands.swift */; };
+			AF000000000000000000000F /* ContactHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000E /* ContactHistoryView.swift */; };
+			AF000000000000000000000D /* ContactEditorRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000C /* ContactEditorRows.swift */; };
+			AF000000000000000000000B /* ContactHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000A /* ContactHistoryStore.swift */; };
+			AF0000000000000000000009 /* ContactDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000008 /* ContactDraft.swift */; };
 		0FF17D750720F07B938897EB /* BulkGroupAssignMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D3C7446567B15586263E064 /* BulkGroupAssignMenu.swift */; };
 		27B71B54685B33C85826A0EE /* SmartGroupEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A31CFD3F9947F7695A53DFD6 /* SmartGroupEditorView.swift */; };
 		35060AD1233ACD96D75AB9D9 /* ContactsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5248263F5802C78AC90B457 /* ContactsService.swift */; };
@@ -52,6 +58,12 @@
 		FF3D9DC0871A317088B79BB7 /* ContactRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactRowView.swift; sourceTree = "<group>"; };
 			AF0000000000000000000001 /* ContactAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactAvatarView.swift; sourceTree = "<group>"; };
 			AF0000000000000000000003 /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
+			AF0000000000000000000006 /* ContactMapPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactMapPane.swift; sourceTree = "<group>"; };
+			AF0000000000000000000010 /* UndoCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoCommands.swift; sourceTree = "<group>"; };
+			AF000000000000000000000E /* ContactHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactHistoryView.swift; sourceTree = "<group>"; };
+			AF000000000000000000000C /* ContactEditorRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactEditorRows.swift; sourceTree = "<group>"; };
+			AF000000000000000000000A /* ContactHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactHistoryStore.swift; sourceTree = "<group>"; };
+			AF0000000000000000000008 /* ContactDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactDraft.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -69,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				8762F625963AE2A5A9F558DA /* SmartGroup.swift */,
+				AF0000000000000000000008 /* ContactDraft.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -77,6 +90,7 @@
 			isa = PBXGroup;
 			children = (
 				E0D8F1747139FDBD8CB03161 /* AppDataStore.swift */,
+				AF000000000000000000000A /* ContactHistoryStore.swift */,
 			);
 			path = Persistence;
 			sourceTree = "<group>";
@@ -106,6 +120,10 @@
 				FF3D9DC0871A317088B79BB7 /* ContactRowView.swift */,
 				AF0000000000000000000001 /* ContactAvatarView.swift */,
 				AF0000000000000000000003 /* FlowLayout.swift */,
+				AF0000000000000000000006 /* ContactMapPane.swift */,
+				AF0000000000000000000010 /* UndoCommands.swift */,
+				AF000000000000000000000E /* ContactHistoryView.swift */,
+				AF000000000000000000000C /* ContactEditorRows.swift */,
 				EDF3A9F8F88F7D01D9CAC67C /* ContactDetailView.swift */,
 				65A827273DB9C76EA0473E93 /* GroupEditorSheet.swift */,
 				A31CFD3F9947F7695A53DFD6 /* SmartGroupEditorView.swift */,
@@ -237,6 +255,12 @@
 				0A1D7C55BF5A614FA36A4225 /* SidebarView.swift in Sources */,
 				AF0000000000000000000002 /* ContactAvatarView.swift in Sources */,
 				AF0000000000000000000004 /* FlowLayout.swift in Sources */,
+				AF0000000000000000000007 /* ContactMapPane.swift in Sources */,
+				AF0000000000000000000011 /* UndoCommands.swift in Sources */,
+				AF000000000000000000000F /* ContactHistoryView.swift in Sources */,
+				AF000000000000000000000D /* ContactEditorRows.swift in Sources */,
+				AF000000000000000000000B /* ContactHistoryStore.swift in Sources */,
+				AF0000000000000000000009 /* ContactDraft.swift in Sources */,
 				ABBDCECB499D9C978F809D09 /* ContactListView.swift in Sources */,
 				F997984A6B12129F476E7E6C /* ContactRowView.swift in Sources */,
 				AC6A9B84B49CB114DAD350E8 /* ContactDetailView.swift in Sources */,

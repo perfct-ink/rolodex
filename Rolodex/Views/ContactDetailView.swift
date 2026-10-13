@@ -6,49 +6,62 @@ struct ContactDetailView: View {
     @EnvironmentObject var viewModel: ContactsViewModel
     let contact: CNContact
 
-    @State private var givenName = ""
-    @State private var familyName = ""
-    @State private var organizationName = ""
-    @State private var jobTitle = ""
+    // Edits go into `draft` and are saved automatically; `baseline` is what
+    // Contacts last held, so only the difference is written and recorded.
+    @State private var draft: ContactDraft
+    @State private var baseline: ContactDraft
+    @State private var isSaving = false
+    @State private var revealed: Set<ScalarField> = []
     @State private var vCardURL: URL?
     @State private var imageData: Data?
+    // The address shown in the map pane, if any.
+    @State private var mapAddressID: UUID?
+    @State private var showingHistory = false
+    @FocusState private var focusedHeaderField: HeaderField?
+    // Each saved change is one undo step. A step holds the draft to return to.
+    @State private var undoStack: [UndoStep] = []
+    @State private var redoStack: [UndoStep] = []
+    // Set while undo/redo saves, so that save isn't recorded as a new edit.
+    @State private var restoreTarget: ContactDraft?
+
+    private struct UndoStep {
+        let draft: ContactDraft
+        let name: String
+
+        func adopting(_ extras: ContactDraft) -> UndoStep {
+            var adopted = draft
+            adopted.adoptExtras(from: extras)
+            return UndoStep(draft: adopted, name: name)
+        }
+    }
+
+    private static let maxUndoSteps = 100
+
+    private enum HeaderField { case jobTitle, company }
+
+    private enum ScalarField { case nickname, department }
+
+    private struct ActionTarget: Identifiable {
+        let id: Int
+        let label: String
+        let value: String
+
+        var menuTitle: String { label.isEmpty ? value : "\(label): \(value)" }
+    }
+
+    init(contact: CNContact) {
+        self.contact = contact
+        let initial = ContactDraft(contact)
+        _draft = State(initialValue: initial)
+        _baseline = State(initialValue: initial)
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 header
                 actionBar
-
-                if !contact.phoneNumbers.isEmpty {
-                    card {
-                        ForEach(Array(contact.phoneNumbers.enumerated()), id: \.offset) { index, labeled in
-                            if index > 0 { Divider() }
-                            phoneRow(labeled)
-                        }
-                    }
-                }
-
-                if !contact.emailAddresses.isEmpty {
-                    card {
-                        ForEach(Array(contact.emailAddresses.enumerated()), id: \.offset) { index, labeled in
-                            if index > 0 { Divider() }
-                            fieldRow(label: CNLabeledValue<NSString>.localizedString(forLabel: labeled.label ?? ""),
-                                     value: labeled.value as String, fieldName: "email address")
-                        }
-                    }
-                }
-
-                if !contact.postalAddresses.isEmpty {
-                    card {
-                        ForEach(Array(contact.postalAddresses.enumerated()), id: \.offset) { index, labeled in
-                            if index > 0 { Divider() }
-                            fieldRow(label: CNLabeledValue<CNPostalAddress>.localizedString(forLabel: labeled.label ?? ""),
-                                     value: CNPostalAddressFormatter.string(from: labeled.value, style: .mailingAddress),
-                                     fieldName: "postal address")
-                        }
-                    }
-                }
-
+                editableCards
                 groupsCard
             }
             .frame(maxWidth: 520)
@@ -57,11 +70,33 @@ struct ContactDetailView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let address = draft.addresses.first(where: { $0.id == mapAddressID }) {
+                ContactMapPane(title: contact.displayName, address: address) {
+                    withAnimation { mapAddressID = nil }
+                }
+                .transition(.move(edge: .bottom))
+            }
+        }
         .navigationTitle(contact.displayName)
+        .focusedSceneValue(\.contactUndo, ContactUndoActions(
+            undoName: undoStack.last?.name,
+            redoName: redoStack.last?.name,
+            undo: { Task { await undo() } },
+            redo: { Task { await redo() } }
+        ))
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                Button("Save") { save() }
-                    .disabled(!isDirty)
+                addFieldMenu
+                Button {
+                    showingHistory.toggle()
+                } label: {
+                    Label("History", systemImage: "clock.arrow.circlepath")
+                }
+                .help("Show Change History")
+                .popover(isPresented: $showingHistory, arrowEdge: .bottom) {
+                    ContactHistoryView(history: viewModel.history, contactID: contact.identifier)
+                }
                 if let vCardURL {
                     ShareLink(item: vCardURL) {
                         Label("Share Contact", systemImage: "square.and.arrow.up")
@@ -81,12 +116,6 @@ struct ContactDetailView: View {
                 }
             }
         }
-        .onAppear {
-            loadFields()
-        }
-        .onChange(of: contact.identifier) { _, _ in
-            loadFields()
-        }
         .task(id: contact) {
             vCardURL = nil
             imageData = nil
@@ -98,6 +127,95 @@ struct ContactDetailView: View {
             imageData = loadedPhoto
             vCardURL = loadedCard
         }
+        .task(id: contact.identifier) {
+            guard let loaded = try? await ContactsService.shared.fetchExtraFields(identifier: contact.identifier) else { return }
+            let extras = ContactDraft(extras: loaded)
+            draft.adoptExtras(from: extras)
+            baseline.adoptExtras(from: extras)
+            // Steps recorded before the extras arrived must not undo them away.
+            undoStack = undoStack.map { $0.adopting(extras) }
+            redoStack = redoStack.map { $0.adopting(extras) }
+            if !extras.nickname.isEmpty { revealed.insert(.nickname) }
+            if !extras.departmentName.isEmpty { revealed.insert(.department) }
+        }
+        // Saves shortly after typing stops.
+        .task(id: draft) {
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            await commit()
+        }
+        .onDisappear {
+            Task { await commit() }
+        }
+    }
+
+    // MARK: - Autosave
+
+    private func commit() async {
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
+        // Edits made during a save are picked up by the next pass.
+        while draft != baseline {
+            let saved = draft
+            let previous = baseline
+            guard await viewModel.saveContact(identifier: contact.identifier, from: previous, to: saved) else { return }
+            baseline = saved
+            if restoreTarget == saved {
+                // Undo and redo manage the stacks themselves.
+                restoreTarget = nil
+                continue
+            }
+            let fields = previous.changes(to: saved).map(\.field)
+            guard !fields.isEmpty else { continue }
+            undoStack.append(UndoStep(draft: previous, name: fields.prefix(2).joined(separator: ", ")))
+            if undoStack.count > Self.maxUndoSteps { undoStack.removeFirst() }
+            redoStack.removeAll()
+        }
+    }
+
+    // MARK: - Undo
+
+    // Waits out a save in flight and saves pending edits, so a step is
+    // never taken against a half-saved state.
+    private func settle() async {
+        while isSaving { try? await Task.sleep(for: .milliseconds(50)) }
+        await commit()
+        while isSaving { try? await Task.sleep(for: .milliseconds(50)) }
+    }
+
+    private func undo() async {
+        await settle()
+        guard draft == baseline, let step = undoStack.popLast() else { return }
+        let current = UndoStep(draft: baseline, name: step.name)
+        redoStack.append(current)
+        await restore(step.draft) {
+            redoStack.removeLast()
+            undoStack.append(step)
+        }
+    }
+
+    private func redo() async {
+        await settle()
+        guard draft == baseline, let step = redoStack.popLast() else { return }
+        let current = UndoStep(draft: baseline, name: step.name)
+        undoStack.append(current)
+        await restore(step.draft) {
+            undoStack.removeLast()
+            redoStack.append(step)
+        }
+    }
+
+    private func restore(_ target: ContactDraft, rollback: () -> Void) async {
+        restoreTarget = target
+        draft = target
+        await commit()
+        if baseline != target {
+            // The save failed and the error alert is showing; leave things as they were.
+            restoreTarget = nil
+            rollback()
+            draft = baseline
+        }
     }
 
     // MARK: - Header
@@ -107,29 +225,56 @@ struct ContactDetailView: View {
             avatar
                 .padding(.bottom, 6)
 
-            HStack(spacing: 6) {
-                TextField("", text: $givenName, prompt: Text("First Name"))
-                    .accessibilityLabel("First Name")
-                    .multilineTextAlignment(.trailing)
-                TextField("", text: $familyName, prompt: Text("Last Name"))
-                    .accessibilityLabel("Last Name")
-                    .multilineTextAlignment(.leading)
-            }
-            .font(.system(size: 26, weight: .semibold))
-
-            VStack(spacing: 2) {
-                TextField("", text: $jobTitle, prompt: Text("Job Title"))
-                    .accessibilityLabel("Job Title")
-                TextField("", text: $organizationName, prompt: Text("Company"))
+            if draft.isCompany {
+                // A company is known by its name, so that takes the title's place.
+                TextField("", text: $draft.organizationName, prompt: Text("Company"))
                     .accessibilityLabel("Company")
+                    .font(.system(size: 26, weight: .semibold))
+                    .multilineTextAlignment(.center)
+            } else {
+                HStack(spacing: 6) {
+                    TextField("", text: $draft.givenName, prompt: Text("First Name"))
+                        .accessibilityLabel("First Name")
+                        .multilineTextAlignment(.trailing)
+                    TextField("", text: $draft.familyName, prompt: Text("Last Name"))
+                        .accessibilityLabel("Last Name")
+                        .multilineTextAlignment(.leading)
+                }
+                .font(.system(size: 26, weight: .semibold))
+
+                VStack(spacing: 2) {
+                    TextField("", text: $draft.jobTitle, prompt: Text("Job Title"))
+                        .accessibilityLabel("Job Title")
+                        .focused($focusedHeaderField, equals: .jobTitle)
+                        .opacity(isDimmed(draft.jobTitle, field: .jobTitle) ? 0.45 : 1)
+                    TextField("", text: $draft.organizationName, prompt: Text("Company"))
+                        .accessibilityLabel("Company")
+                        .focused($focusedHeaderField, equals: .company)
+                        .opacity(isDimmed(draft.organizationName, field: .company) ? 0.45 : 1)
+                }
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             }
-            .font(.title3)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
+
+            Picker("Type", selection: $draft.isCompany) {
+                Label("Person", systemImage: "person.fill").tag(false)
+                Label("Company", systemImage: "building.2.fill").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 200)
+            .padding(.top, 6)
+            .help("Whether this is a person or a company")
         }
         .textFieldStyle(.plain)
         .labelsHidden()
         .frame(maxWidth: .infinity)
+    }
+
+    // Empty fields recede, but stay fully visible while being typed into.
+    private func isDimmed(_ text: String, field: HeaderField) -> Bool {
+        text.isEmpty && focusedHeaderField != field
     }
 
     @ViewBuilder
@@ -146,7 +291,7 @@ struct ContactDetailView: View {
         } else {
             ZStack {
                 Circle().fill(LinearGradient(colors: contact.posterGradient, startPoint: .top, endPoint: .bottom))
-                if contact.isCompany {
+                if draft.isCompany {
                     Image(systemName: "building.2.fill")
                         .font(.system(size: size * 0.4))
                 } else {
@@ -159,38 +304,242 @@ struct ContactDetailView: View {
         }
     }
 
+    // MARK: - Actions
+
+    private var phoneTargets: [ActionTarget] {
+        draft.normalized().phones.enumerated().map {
+            ActionTarget(id: $0.offset, label: ContactLabel.text($0.element.label), value: $0.element.value)
+        }
+    }
+
+    private var emailTargets: [ActionTarget] {
+        draft.normalized().emails.enumerated().map {
+            ActionTarget(id: $0.offset, label: ContactLabel.text($0.element.label), value: $0.element.value)
+        }
+    }
+
     private var actionBar: some View {
-        HStack(spacing: 10) {
-            actionButton("Message", systemImage: "message.fill", enabled: contact.primaryPhone != nil) {
-                if let phone = contact.primaryPhone { open(scheme: "sms", target: phone) }
+        let phones = phoneTargets
+        let emails = emailTargets
+        // Video calls can reach a phone number or an email address.
+        let video = phones + emails.map { ActionTarget(id: phones.count + $0.id, label: $0.label, value: $0.value) }
+        return HStack(spacing: 10) {
+            actionButton("Message", systemImage: "message.fill", targets: phones, missing: "phone number") {
+                open(scheme: "sms", target: $0)
             }
-            actionButton("Call", systemImage: "phone.fill", enabled: contact.primaryPhone != nil) {
-                if let phone = contact.primaryPhone { open(scheme: "tel", target: phone) }
+            actionButton("Call", systemImage: "phone.fill", targets: phones, missing: "phone number") {
+                open(scheme: "tel", target: $0)
             }
-            actionButton("Video", systemImage: "video.fill", enabled: contact.primaryPhone != nil || contact.primaryEmail != nil) {
-                if let target = contact.primaryPhone ?? contact.primaryEmail { open(scheme: "facetime", target: target) }
+            actionButton("Video", systemImage: "video.fill", targets: video, missing: "phone number or email") {
+                open(scheme: "facetime", target: $0)
             }
-            actionButton("Mail", systemImage: "envelope.fill", enabled: contact.primaryEmail != nil) {
-                if let email = contact.primaryEmail { open(scheme: "mailto", target: email) }
+            actionButton("Mail", systemImage: "envelope.fill", targets: emails, missing: "email address") {
+                open(scheme: "mailto", target: $0)
             }
         }
     }
 
-    private func actionButton(_ title: String, systemImage: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 16))
-                Text(title)
-                    .font(.caption)
+    // One target acts directly, and its tooltip says which. Several targets
+    // open a menu so the choice is never made silently.
+    @ViewBuilder
+    private func actionButton(_ title: String, systemImage: String, targets: [ActionTarget], missing: String,
+                              action: @escaping (String) -> Void) -> some View {
+        if targets.count > 1 {
+            Menu {
+                ForEach(targets) { target in
+                    Button(target.menuTitle) { action(target.value) }
+                }
+            } label: {
+                actionTile(title, systemImage: systemImage)
             }
-            .frame(maxWidth: .infinity, minHeight: 50)
-            .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
-            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .foregroundStyle(Color.accentColor)
+            .help("Choose where to \(title.lowercased())")
+        } else {
+            Button {
+                if let target = targets.first { action(target.value) }
+            } label: {
+                actionTile(title, systemImage: systemImage)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(targets.isEmpty ? Color.secondary.opacity(0.6) : Color.accentColor)
+            .disabled(targets.isEmpty)
+            .help(targets.first.map { "\(title) \($0.value)" } ?? "No \(missing)")
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(enabled ? Color.accentColor : Color.secondary.opacity(0.6))
-        .disabled(!enabled)
+    }
+
+    private func actionTile(_ title: String, systemImage: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: 16))
+            Text(title)
+                .font(.caption)
+        }
+        .frame(maxWidth: .infinity, minHeight: 50)
+        .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: - Editable fields
+
+    @ViewBuilder
+    private var editableCards: some View {
+        if !draft.phones.isEmpty {
+            card {
+                ForEach($draft.phones) { $row in
+                    if row.id != draft.phones.first?.id { Divider() }
+                    LabeledValueRow(row: $row, labels: ContactLabels.phone, placeholder: "Phone",
+                                    fieldName: "phone number", onDelete: { draft.phones.removeAll { $0.id == row.id } }) {
+                        phoneButtons(row.value)
+                    }
+                }
+            }
+        }
+
+        if !draft.emails.isEmpty {
+            card {
+                ForEach($draft.emails) { $row in
+                    if row.id != draft.emails.first?.id { Divider() }
+                    LabeledValueRow(row: $row, labels: ContactLabels.email, placeholder: "Email",
+                                    fieldName: "email address", onDelete: { draft.emails.removeAll { $0.id == row.id } })
+                }
+            }
+        }
+
+        if !draft.urls.isEmpty {
+            card {
+                ForEach($draft.urls) { $row in
+                    if row.id != draft.urls.first?.id { Divider() }
+                    LabeledValueRow(row: $row, labels: ContactLabels.url, placeholder: "URL",
+                                    fieldName: "URL", onDelete: { draft.urls.removeAll { $0.id == row.id } })
+                }
+            }
+        }
+
+        if !draft.addresses.isEmpty {
+            card {
+                ForEach($draft.addresses) { $row in
+                    if row.id != draft.addresses.first?.id { Divider() }
+                    AddressRow(
+                        row: $row, isShowingMap: mapAddressID == row.id,
+                        onToggleMap: { withAnimation { mapAddressID = mapAddressID == row.id ? nil : row.id } },
+                        onDelete: { draft.addresses.removeAll { $0.id == row.id } }
+                    )
+                }
+            }
+        }
+
+        if draft.birthday != nil || !draft.dates.isEmpty {
+            card {
+                if draft.birthday != nil {
+                    DateRow(components: Binding(get: { draft.birthday ?? DateComponents() }, set: { draft.birthday = $0 }),
+                            onDelete: { draft.birthday = nil })
+                }
+                ForEach($draft.dates) { $row in
+                    if draft.birthday != nil || row.id != draft.dates.first?.id { Divider() }
+                    DateRow(title: "Date", label: $row.label, components: $row.components,
+                            onDelete: { draft.dates.removeAll { $0.id == row.id } })
+                }
+            }
+        }
+
+        if !draft.relations.isEmpty {
+            card {
+                ForEach($draft.relations) { $row in
+                    if row.id != draft.relations.first?.id { Divider() }
+                    LabeledValueRow(row: $row, labels: ContactLabels.relation, placeholder: "Name",
+                                    fieldName: "related name", onDelete: { draft.relations.removeAll { $0.id == row.id } })
+                }
+            }
+        }
+
+        if !draft.social.isEmpty || !draft.messaging.isEmpty {
+            card {
+                ForEach($draft.social) { $row in
+                    if row.id != draft.social.first?.id { Divider() }
+                    ServiceRow(row: $row, kind: "Social", onDelete: { draft.social.removeAll { $0.id == row.id } })
+                }
+                ForEach($draft.messaging) { $row in
+                    if !draft.social.isEmpty || row.id != draft.messaging.first?.id { Divider() }
+                    ServiceRow(row: $row, kind: "Message", onDelete: { draft.messaging.removeAll { $0.id == row.id } })
+                }
+            }
+        }
+
+        if !revealed.isEmpty {
+            card {
+                if revealed.contains(.nickname) {
+                    scalarRow("Nickname", text: $draft.nickname)
+                }
+                if revealed.contains(.nickname) && revealed.contains(.department) { Divider() }
+                if revealed.contains(.department) {
+                    scalarRow("Department", text: $draft.departmentName)
+                }
+            }
+        }
+    }
+
+    private func scalarRow(_ title: String, text: Binding<String>) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 76, alignment: .leading)
+            TextField("", text: text, prompt: Text(title))
+                .textFieldStyle(.plain)
+                .accessibilityLabel(title)
+        }
+        .padding(.vertical, 8)
+        .modifier(ContactFieldCopy(value: text.wrappedValue, fieldName: title.lowercased()))
+    }
+
+    private func phoneButtons(_ number: String) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                open(scheme: "sms", target: number)
+            } label: {
+                Image(systemName: "message.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .help("Text \(number)")
+
+            Button {
+                open(scheme: "tel", target: number)
+            } label: {
+                Image(systemName: "phone.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+            .help("Call \(number)")
+        }
+    }
+
+    private var addFieldMenu: some View {
+        let today = Calendar.current.dateComponents([.month, .day], from: Date())
+        return Menu {
+            Button("Phone") { draft.phones.append(DraftValue(label: ContactLabels.phone[0])) }
+            Button("Email") { draft.emails.append(DraftValue(label: ContactLabels.email[0])) }
+            Button("URL") { draft.urls.append(DraftValue(label: ContactLabels.url[0])) }
+            Button("Address") { draft.addresses.append(DraftAddress(label: ContactLabels.address[0])) }
+            if draft.birthday == nil {
+                Button("Birthday") { draft.birthday = today }
+            }
+            Button("Date") { draft.dates.append(DraftDate(label: ContactLabels.date[0], components: today)) }
+            Button("Related Name") { draft.relations.append(DraftValue(label: ContactLabels.relation[0])) }
+            Button("Social Profile") { draft.social.append(DraftService()) }
+            Button("Instant Message") { draft.messaging.append(DraftService()) }
+            if !revealed.contains(.nickname) {
+                Button("Nickname") { revealed.insert(.nickname) }
+            }
+            if !revealed.contains(.department) {
+                Button("Department") { revealed.insert(.department) }
+            }
+        } label: {
+            Label("Add Field", systemImage: "plus")
+        }
+        .help("Add Field")
     }
 
     // MARK: - Cards
@@ -203,20 +552,6 @@ struct ContactDetailView: View {
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func fieldRow(label: String, value: String, fieldName: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
-        .modifier(ContactFieldCopy(value: value, fieldName: fieldName))
     }
 
     private var groupsCard: some View {
@@ -286,94 +621,13 @@ struct ContactDetailView: View {
         .fixedSize()
     }
 
-    private func phoneRow(_ labeled: CNLabeledValue<CNPhoneNumber>) -> some View {
-        let number = labeled.value.stringValue
-        return HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(CNLabeledValue<CNPhoneNumber>.localizedString(forLabel: labeled.label ?? ""))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(number)
-                    .textSelection(.enabled)
-            }
-            Spacer()
-            Button {
-                open(scheme: "sms", target: number)
-            } label: {
-                Image(systemName: "message.fill")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
-            .help("Text")
-
-            Button {
-                open(scheme: "tel", target: number)
-            } label: {
-                Image(systemName: "phone.fill")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
-            .help("Call")
-        }
-        .padding(.vertical, 8)
-        .modifier(ContactFieldCopy(value: number, fieldName: "phone number"))
-    }
-
     private func open(scheme: String, target: String) {
-        let cleaned = scheme == "mailto" ? target : target.filter { $0.isNumber || $0 == "+" }
+        // Phone numbers are reduced to digits; email addresses (mail, or FaceTime to an email) are kept.
+        let isAddress = scheme == "mailto" || target.contains("@")
+        let cleaned = isAddress ? target : target.filter { $0.isNumber || $0 == "+" }
         let encoded = cleaned.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? cleaned
         guard let url = URL(string: "\(scheme):\(encoded)") else { return }
         NSWorkspace.shared.open(url)
-    }
-
-    private func loadFields() {
-        givenName = contact.givenName
-        familyName = contact.familyName
-        organizationName = contact.organizationName
-        jobTitle = contact.jobTitle
-    }
-
-    private func save() {
-        guard let mutable = contact.mutableCopy() as? CNMutableContact else { return }
-        mutable.givenName = givenName
-        mutable.familyName = familyName
-        mutable.organizationName = organizationName
-        mutable.jobTitle = jobTitle
-        viewModel.saveContact(mutable)
-    }
-
-    private var isDirty: Bool {
-        givenName != contact.givenName
-            || familyName != contact.familyName
-            || organizationName != contact.organizationName
-            || jobTitle != contact.jobTitle
-    }
-}
-
-private struct ContactFieldCopy: ViewModifier {
-    let value: String
-    let fieldName: String
-
-    @State private var isHovered = false
-    @FocusState private var isCopyFocused: Bool
-
-    func body(content: Content) -> some View {
-        HStack(spacing: 8) {
-            content
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(value, forType: .string)
-            } label: {
-                Image(systemName: "doc.on.doc")
-            }
-            .buttonStyle(.plain)
-            .focused($isCopyFocused)
-            .help("Copy \(fieldName)")
-            .accessibilityLabel("Copy \(fieldName)")
-            .opacity(isHovered || isCopyFocused ? 1 : 0)
-        }
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
     }
 }
 

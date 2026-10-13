@@ -7,6 +7,10 @@ DEV_CONFIGURATION := Debug
 RELEASE_CONFIGURATION := Release
 INSTALL_DIR := /Applications
 
+# Dev builds are signed ad hoc so they don't depend on a developer certificate
+# (the entitlements are still embedded). Release builds keep the project's signing.
+DEV_SIGNING := CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
+
 APP_PATH_DEV := $(DERIVED_DATA)/Build/Products/$(DEV_CONFIGURATION)/$(APP_NAME).app
 APP_PATH_RELEASE := $(DERIVED_DATA)/Build/Products/$(RELEASE_CONFIGURATION)/$(APP_NAME).app
 
@@ -52,7 +56,7 @@ dev: clean
 	@echo "Building $(APP_NAME) ($(DEV_CONFIGURATION))..."
 	@n=1; \
 	until xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(DEV_CONFIGURATION) \
-		-derivedDataPath $(DERIVED_DATA) build; do \
+		-derivedDataPath $(DERIVED_DATA) $(DEV_SIGNING) build; do \
 		if [ $$n -ge 4 ]; then \
 			echo "Build failed after $$n attempts."; \
 			exit 1; \
@@ -108,8 +112,8 @@ reinstall: uninstall install
 test:
 	@mkdir -p "$(BUILD_DIR)/Tests"
 	@xcrun swiftc -parse-as-library \
-		Rolodex/Models/SmartGroup.swift Rolodex/Extensions/CNContact+Rolodex.swift \
-		Rolodex/Persistence/AppDataStore.swift Rolodex/Services/ContactsService.swift \
+		Rolodex/Models/SmartGroup.swift Rolodex/Models/ContactDraft.swift Rolodex/Extensions/CNContact+Rolodex.swift \
+		Rolodex/Persistence/AppDataStore.swift Rolodex/Persistence/ContactHistoryStore.swift Rolodex/Services/ContactsService.swift \
 		Rolodex/ViewModels/ContactsViewModel.swift Tests/ContactsPerformanceTests.swift \
 		-o "$(BUILD_DIR)/Tests/ContactsPerformanceTests"
 	@"$(BUILD_DIR)/Tests/ContactsPerformanceTests"

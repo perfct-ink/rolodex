@@ -15,6 +15,7 @@ struct RolodexApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) { }
+            CommandGroup(replacing: .undoRedo) { UndoRedoCommands() }
         }
     }
 }

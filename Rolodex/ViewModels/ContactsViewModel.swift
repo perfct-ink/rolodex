@@ -34,6 +34,7 @@ final class ContactsViewModel: ObservableObject {
 
     private let contactsService = ContactsService.shared
     private let dataStore = AppDataStore.shared
+    let history = ContactHistoryStore.shared
     private var notificationObserver: NSObjectProtocol?
 
     init(loadSnapshot: (@MainActor () async throws -> ContactsSnapshot)? = nil) {
@@ -247,9 +248,20 @@ final class ContactsViewModel: ObservableObject {
         }
     }
 
-    func saveContact(_ mutable: CNMutableContact) {
-        performChange { service in
-            try await service.update(mutable)
+    /// Returns whether the edit was saved; on failure the error alert is shown.
+    func saveContact(identifier: String, from baseline: ContactDraft, to draft: ContactDraft) async -> Bool {
+        let changes = baseline.changes(to: draft)
+        guard !changes.isEmpty else { return true }
+        do {
+            try await contactsService.updateContact(identifier: identifier) { contact in
+                draft.apply(to: contact, baseline: baseline)
+            }
+            history.record(changes, contactID: identifier)
+            scheduleRefresh()
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 

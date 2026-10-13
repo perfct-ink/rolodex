@@ -65,7 +65,7 @@ struct ContentView: View {
             ContentUnavailableView(
                 "\(viewModel.selectedContactIDs.count) Contacts Selected",
                 systemImage: "person.2.crop.square.stack",
-                description: Text("Use the toolbar to add these contacts to a group.")
+                description: Text("Drag them onto a group in the sidebar to add them.")
             )
         } else {
             ContentUnavailableView(
