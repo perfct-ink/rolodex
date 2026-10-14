@@ -145,6 +145,10 @@ struct CopyButton: View {
     let value: String
     let fieldName: String
 
+    // The icon swaps quickly, then the checkmark stays long enough to be noticed.
+    private static let swapAnimation = Animation.easeOut(duration: 0.1)
+    private static let checkmarkDuration = Duration.seconds(4)
+
     @Environment(\.isRowHovered) private var isRowHovered
     @State private var isHovered = false
     @State private var isCopied = false
@@ -157,7 +161,9 @@ struct CopyButton: View {
             Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                 .foregroundStyle(isCopied ? Color.green : (isHovered ? Color.accentColor : Color.secondary))
                 .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, value: copyCount)
+                .symbolEffect(.bounce, options: .speed(2.5), value: copyCount)
+                // The two symbols differ in size; a fixed box keeps the row from changing height.
+                .frame(width: 16, height: 16)
         }
         .buttonStyle(.plain)
         .focused($isFocused)
@@ -173,12 +179,12 @@ struct CopyButton: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
         copyCount += 1
-        withAnimation { isCopied = true }
+        withAnimation(Self.swapAnimation) { isCopied = true }
         resetTask?.cancel()
         resetTask = Task {
-            try? await Task.sleep(for: .seconds(1.5))
+            try? await Task.sleep(for: Self.checkmarkDuration)
             guard !Task.isCancelled else { return }
-            withAnimation { isCopied = false }
+            withAnimation(Self.swapAnimation) { isCopied = false }
         }
     }
 }
