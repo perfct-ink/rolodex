@@ -14,7 +14,7 @@ DEV_SIGNING := CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
 APP_PATH_DEV := $(DERIVED_DATA)/Build/Products/$(DEV_CONFIGURATION)/$(APP_NAME).app
 APP_PATH_RELEASE := $(DERIVED_DATA)/Build/Products/$(RELEASE_CONFIGURATION)/$(APP_NAME).app
 
-.PHONY: all help setup dev build clean open close install uninstall reinstall test
+.PHONY: all help setup dev dev-build test-contacts build clean open close install uninstall reinstall test
 
 ## Default target: same as `make setup` then `make dev`.
 all: setup dev
@@ -29,6 +29,7 @@ help:
 	@echo "  make close      Kill the running app (native app only)"
 	@echo "  make clean      Kill the running app and remove build artifacts"
 	@echo "  make test       Run unit tests"
+	@echo "  make test-contacts  Check edits against the real Contacts API (temporary contact)"
 	@echo ""
 	@echo "Production / distribution:"
 	@echo "  make build      Build for production (Release)"
@@ -52,7 +53,11 @@ setup:
 	@echo "Environment OK."
 
 ## Build for development and open it.
-dev: clean
+dev: clean dev-build
+	@$(MAKE) --no-print-directory open
+
+## Build for development (no clean, no open).
+dev-build:
 	@echo "Building $(APP_NAME) ($(DEV_CONFIGURATION))..."
 	@n=1; \
 	until xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(DEV_CONFIGURATION) \
@@ -65,7 +70,6 @@ dev: clean
 		n=$$((n + 1)); \
 		sleep 5; \
 	done
-	@$(MAKE) --no-print-directory open
 
 ## Build for production.
 build:
@@ -122,3 +126,14 @@ test:
 	else \
 		xcodebuild -project $(PROJECT) -scheme $(SCHEME) -destination 'platform=macOS' test; \
 	fi
+
+## Edit a temporary contact through the real Contacts API and read it back.
+## The Debug app runs in self-test mode and needs Contacts permission, so macOS
+## may ask for it; approve the prompt. The contact is deleted afterwards.
+test-contacts: dev-build
+	@mkdir -p "$(BUILD_DIR)/Tests"
+	@: > "$(BUILD_DIR)/Tests/contacts-selftest.log"
+	@echo "Running Contacts API tests (approve the Contacts prompt if macOS shows one)..."
+	@open -W -n --stderr "$(abspath $(BUILD_DIR))/Tests/contacts-selftest.log" "$(APP_PATH_DEV)" --args --contacts-selftest
+	@cat "$(BUILD_DIR)/Tests/contacts-selftest.log"
+	@grep -q "SELFTEST PASSED" "$(BUILD_DIR)/Tests/contacts-selftest.log"

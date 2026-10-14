@@ -68,6 +68,9 @@ struct ContactDetailView: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 20)
             .frame(maxWidth: .infinity)
+            // Clicking anywhere that isn't a control ends editing.
+            .contentShape(Rectangle())
+            .onTapGesture { clearFocus() }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -241,7 +244,9 @@ struct ContactDetailView: View {
                         .multilineTextAlignment(.leading)
                 }
                 .font(.system(size: 26, weight: .semibold))
+            }
 
+            if !draft.isCompany {
                 VStack(spacing: 2) {
                     TextField("", text: $draft.jobTitle, prompt: Text("Job Title"))
                         .accessibilityLabel("Job Title")
@@ -255,21 +260,40 @@ struct ContactDetailView: View {
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .padding(.top, 2)
             }
 
-            Picker("Type", selection: $draft.isCompany) {
-                Label("Person", systemImage: "person.fill").tag(false)
-                Label("Company", systemImage: "building.2.fill").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 200)
-            .padding(.top, 6)
-            .help("Whether this is a person or a company")
+            typeTag
+                .padding(.top, 4)
         }
         .textFieldStyle(.plain)
         .labelsHidden()
         .frame(maxWidth: .infinity)
+    }
+
+    // Styled like the group tags. Clicking switches between Person and Company.
+    private var typeTag: some View {
+        Button {
+            draft.isCompany.toggle()
+        } label: {
+            Text(draft.isCompany ? "Company" : "Person")
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.accentColor.opacity(0.15))
+                .foregroundStyle(Color.accentColor)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .hoverHighlight()
+        .help(draft.isCompany ? "Company. Click to change to Person" : "Person. Click to change to Company")
+        .accessibilityLabel("Contact type")
+        .accessibilityValue(draft.isCompany ? "Company" : "Person")
+    }
+
+    private func clearFocus() {
+        focusedHeaderField = nil
+        NSApp.keyWindow?.makeFirstResponder(nil)
     }
 
     // Empty fields recede, but stay fully visible while being typed into.
@@ -350,32 +374,35 @@ struct ContactDetailView: View {
                     Button(target.menuTitle) { action(target.value) }
                 }
             } label: {
-                actionTile(title, systemImage: systemImage)
+                actionTile(title, systemImage: systemImage, enabled: true)
             }
-            .menuStyle(.borderlessButton)
+            // The plain button style keeps the menu's label as drawn, so it matches the buttons.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
             .menuIndicator(.hidden)
-            .foregroundStyle(Color.accentColor)
+            .hoverHighlight()
             .help("Choose where to \(title.lowercased())")
         } else {
             Button {
                 if let target = targets.first { action(target.value) }
             } label: {
-                actionTile(title, systemImage: systemImage)
+                actionTile(title, systemImage: systemImage, enabled: !targets.isEmpty)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(targets.isEmpty ? Color.secondary.opacity(0.6) : Color.accentColor)
             .disabled(targets.isEmpty)
+            .hoverHighlight()
             .help(targets.first.map { "\(title) \($0.value)" } ?? "No \(missing)")
         }
     }
 
-    private func actionTile(_ title: String, systemImage: String) -> some View {
+    private func actionTile(_ title: String, systemImage: String, enabled: Bool) -> some View {
         VStack(spacing: 4) {
             Image(systemName: systemImage)
                 .font(.system(size: 16))
             Text(title)
                 .font(.caption)
         }
+        .foregroundStyle(enabled ? Color.accentColor : Color.secondary.opacity(0.6))
         .frame(maxWidth: .infinity, minHeight: 50)
         .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
         .contentShape(RoundedRectangle(cornerRadius: 10))
@@ -482,16 +509,14 @@ struct ContactDetailView: View {
 
     private func scalarRow(_ title: String, text: Binding<String>) -> some View {
         HStack(spacing: 8) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 76, alignment: .leading)
-            TextField("", text: text, prompt: Text(title))
-                .textFieldStyle(.plain)
-                .accessibilityLabel(title)
+            RowTitle(title)
+            FittedTextField(text: text, prompt: title, fieldName: title)
+            CopyButton(value: text.wrappedValue, fieldName: title.lowercased())
+            Spacer(minLength: 0)
         }
         .padding(.vertical, 8)
-        .modifier(ContactFieldCopy(value: text.wrappedValue, fieldName: title.lowercased()))
+        .fixedSize(horizontal: false, vertical: true)
+        .hoverableRow()
     }
 
     private func phoneButtons(_ number: String) -> some View {
@@ -503,6 +528,7 @@ struct ContactDetailView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
+            .hoverHighlight()
             .help("Text \(number)")
 
             Button {
@@ -512,6 +538,7 @@ struct ContactDetailView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
+            .hoverHighlight()
             .help("Call \(number)")
         }
     }
@@ -591,6 +618,7 @@ struct ContactDetailView: View {
                     .font(.caption2)
             }
             .buttonStyle(.plain)
+            .hoverHighlight()
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
@@ -619,6 +647,7 @@ struct ContactDetailView: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+        .hoverHighlight()
     }
 
     private func open(scheme: String, target: String) {

@@ -88,6 +88,7 @@ struct ContactListView: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+        .hoverHighlight()
     }
 
     private var title: String {

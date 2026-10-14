@@ -104,6 +104,22 @@ final class ContactsService: @unchecked Sendable {
         }
     }
 
+    // Every editable key, for reading a contact back after it was changed.
+    func fetchContact(identifier: String) async throws -> CNContact {
+        try await ioQueue.run { [self] in
+            try store.unifiedContact(withIdentifier: identifier, keysToFetch: Self.keysToFetch + Self.extraKeysToFetch)
+        }
+    }
+
+    func contacts(matchingName name: String) async throws -> [CNContact] {
+        try await ioQueue.run { [self] in
+            try store.unifiedContacts(
+                matching: CNContact.predicateForContacts(matchingName: name),
+                keysToFetch: Self.keysToFetch + Self.extraKeysToFetch
+            )
+        }
+    }
+
     func fetchExtraFields(identifier: String) async throws -> CNContact {
         try await ioQueue.run { [self] in
             try store.unifiedContact(withIdentifier: identifier, keysToFetch: Self.extraKeysToFetch)
@@ -131,7 +147,8 @@ final class ContactsService: @unchecked Sendable {
         await withCheckedContinuation { continuation in
             ioQueue.enqueue { [self] in
                 let status = CNContactStore.authorizationStatus(for: .contacts)
-                print("Rolodex: Contacts TCC status at startup = \(status)")
+                // stderr is unbuffered, so this shows up even when output is redirected to a file.
+                fputs("Rolodex: Contacts TCC status at startup = \(status)\n", stderr)
                 switch status {
                 case .authorized, .limited:
                     continuation.resume(returning: true)

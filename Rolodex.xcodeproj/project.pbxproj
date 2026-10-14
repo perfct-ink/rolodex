@@ -11,6 +11,7 @@
 			AF0000000000000000000002 /* ContactAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000001 /* ContactAvatarView.swift */; };
 			AF0000000000000000000004 /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000003 /* FlowLayout.swift */; };
 			AF0000000000000000000007 /* ContactMapPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000006 /* ContactMapPane.swift */; };
+			AF0000000000000000000013 /* ContactsSelfTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000012 /* ContactsSelfTest.swift */; };
 			AF0000000000000000000011 /* UndoCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000010 /* UndoCommands.swift */; };
 			AF000000000000000000000F /* ContactHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000E /* ContactHistoryView.swift */; };
 			AF000000000000000000000D /* ContactEditorRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF000000000000000000000C /* ContactEditorRows.swift */; };
@@ -59,6 +60,7 @@
 			AF0000000000000000000001 /* ContactAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactAvatarView.swift; sourceTree = "<group>"; };
 			AF0000000000000000000003 /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
 			AF0000000000000000000006 /* ContactMapPane.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactMapPane.swift; sourceTree = "<group>"; };
+			AF0000000000000000000012 /* ContactsSelfTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsSelfTest.swift; sourceTree = "<group>"; };
 			AF0000000000000000000010 /* UndoCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UndoCommands.swift; sourceTree = "<group>"; };
 			AF000000000000000000000E /* ContactHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactHistoryView.swift; sourceTree = "<group>"; };
 			AF000000000000000000000C /* ContactEditorRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactEditorRows.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 			isa = PBXGroup;
 			children = (
 				D5248263F5802C78AC90B457 /* ContactsService.swift */,
+				AF0000000000000000000012 /* ContactsSelfTest.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -256,6 +259,7 @@
 				AF0000000000000000000002 /* ContactAvatarView.swift in Sources */,
 				AF0000000000000000000004 /* FlowLayout.swift in Sources */,
 				AF0000000000000000000007 /* ContactMapPane.swift in Sources */,
+				AF0000000000000000000013 /* ContactsSelfTest.swift in Sources */,
 				AF0000000000000000000011 /* UndoCommands.swift in Sources */,
 				AF000000000000000000000F /* ContactHistoryView.swift in Sources */,
 				AF000000000000000000000D /* ContactEditorRows.swift in Sources */,

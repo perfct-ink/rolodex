@@ -16,7 +16,60 @@ enum ContactLabels {
     ]
 }
 
-private let labelColumnWidth: CGFloat = 76
+/// Every row starts with a label column this wide, so values line up whatever the field.
+let contactLabelColumnWidth: CGFloat = 76
+
+// MARK: - Hover
+
+/// Clickable controls respond to the pointer; disabled ones stay still.
+private struct HoverHighlight: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isHovered && isEnabled ? 0.65 : 1)
+            .onHover { isHovered = $0 }
+    }
+}
+
+extension View {
+    func hoverHighlight() -> some View {
+        modifier(HoverHighlight())
+    }
+}
+
+private struct RowHoverKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var isRowHovered: Bool {
+        get { self[RowHoverKey.self] }
+        set { self[RowHoverKey.self] = newValue }
+    }
+}
+
+/// Tells the row's copy button when the pointer is over the row. The row itself
+/// doesn't change, since it isn't clickable.
+private struct HoverableRow: ViewModifier {
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.isRowHovered, isHovered)
+            .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
+    }
+}
+
+extension View {
+    func hoverableRow() -> some View {
+        modifier(HoverableRow())
+    }
+}
+
+// MARK: - Pieces
 
 struct LabelMenu: View {
     @Binding var label: String?
@@ -32,17 +85,101 @@ struct LabelMenu: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .frame(width: labelColumnWidth, alignment: .leading)
+                .frame(width: contactLabelColumnWidth, alignment: .leading)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        .hoverHighlight()
     }
 
     // A custom label set elsewhere stays selectable.
     private var allOptions: [String] {
         if let label, !label.isEmpty, !options.contains(label) { return [label] + options }
         return options
+    }
+}
+
+/// The title of a row that has no label menu, in the same column.
+struct RowTitle: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .frame(width: contactLabelColumnWidth, alignment: .leading)
+    }
+}
+
+/// A text field exactly as wide as its text, so whatever follows it (the copy
+/// button) sits right beside the value and moves as you type.
+struct FittedTextField: View {
+    @Binding var text: String
+    let prompt: String
+    let fieldName: String
+    var lines: ClosedRange<Int> = 1...1
+
+    var body: some View {
+        // The invisible text gives the field its width.
+        Text(text.isEmpty ? prompt : text)
+            .lineLimit(lines)
+            .hidden()
+            .frame(minWidth: 44, alignment: .leading)
+            .overlay {
+                TextField("", text: $text, prompt: Text(prompt), axis: lines.upperBound > 1 ? .vertical : .horizontal)
+                    .textFieldStyle(.plain)
+                    .lineLimit(lines)
+                    .accessibilityLabel(fieldName)
+            }
+    }
+}
+
+/// Appears beside a value when the row is hovered or focused. Copying animates the icon.
+struct CopyButton: View {
+    let value: String
+    let fieldName: String
+
+    @Environment(\.isRowHovered) private var isRowHovered
+    @State private var isHovered = false
+    @State private var isCopied = false
+    @State private var copyCount = 0
+    @State private var resetTask: Task<Void, Never>?
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Button(action: copy) {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .foregroundStyle(isCopied ? Color.green : (isHovered ? Color.accentColor : Color.secondary))
+                .contentTransition(.symbolEffect(.replace))
+                .symbolEffect(.bounce, value: copyCount)
+        }
+        .buttonStyle(.plain)
+        .focused($isFocused)
+        .onHover { isHovered = $0 }
+        .help("Copy \(fieldName)")
+        .accessibilityLabel("Copy \(fieldName)")
+        // Always laid out, so showing it doesn't shift the row.
+        .opacity(isRowHovered || isFocused || isCopied ? 1 : 0)
+        .disabled(value.isEmpty)
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        copyCount += 1
+        withAnimation { isCopied = true }
+        resetTask?.cancel()
+        resetTask = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            withAnimation { isCopied = false }
+        }
     }
 }
 
@@ -56,10 +193,13 @@ private struct DeleteRowButton: View {
                 .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .hoverHighlight()
         .help("Remove \(fieldName)")
         .accessibilityLabel("Remove \(fieldName)")
     }
 }
+
+// MARK: - Rows
 
 /// Phone, email, URL, or related name. `accessory` adds row-specific buttons.
 struct LabeledValueRow<Accessory: View>: View {
@@ -83,14 +223,16 @@ struct LabeledValueRow<Accessory: View>: View {
     var body: some View {
         HStack(spacing: 8) {
             LabelMenu(label: $row.label, options: labels)
-            TextField("", text: $row.value, prompt: Text(placeholder))
-                .textFieldStyle(.plain)
-                .accessibilityLabel(fieldName)
+            FittedTextField(text: $row.value, prompt: placeholder, fieldName: fieldName)
+            CopyButton(value: row.value, fieldName: fieldName)
+            Spacer(minLength: 0)
             accessory
             DeleteRowButton(fieldName: fieldName, action: onDelete)
         }
         .padding(.vertical, 8)
-        .modifier(ContactFieldCopy(value: row.value, fieldName: fieldName))
+        // A row is as tall as its content, whatever height it's offered.
+        .fixedSize(horizontal: false, vertical: true)
+        .hoverableRow()
     }
 }
 
@@ -110,37 +252,34 @@ struct AddressRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(alignment: .top, spacing: 8) {
+            LabelMenu(label: $row.label, options: ContactLabels.address)
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    LabelMenu(label: $row.label, options: ContactLabels.address)
-                    Spacer()
-                    DeleteRowButton(fieldName: "address", action: onDelete)
-                }
-                TextField("", text: $row.street, prompt: Text("Street"), axis: .vertical)
+                FittedTextField(text: $row.street, prompt: "Street", fieldName: "street", lines: 1...4)
                 HStack(spacing: 8) {
-                    TextField("", text: $row.city, prompt: Text("City"))
-                    TextField("", text: $row.state, prompt: Text("State"))
-                        .frame(maxWidth: 80)
-                    TextField("", text: $row.postalCode, prompt: Text("ZIP"))
-                        .frame(maxWidth: 80)
+                    FittedTextField(text: $row.city, prompt: "City", fieldName: "city")
+                    FittedTextField(text: $row.state, prompt: "State", fieldName: "state")
+                    FittedTextField(text: $row.postalCode, prompt: "ZIP", fieldName: "ZIP code")
                 }
-                TextField("", text: $row.country, prompt: Text("Country"))
+                FittedTextField(text: $row.country, prompt: "Country", fieldName: "country")
             }
-            .textFieldStyle(.plain)
-            .labelsHidden()
-
-            Button(action: onToggleMap) {
-                Image(systemName: isShowingMap ? "map.fill" : "map")
-                    .foregroundStyle(Color.accentColor)
+            CopyButton(value: row.mailingText, fieldName: "postal address")
+            Spacer(minLength: 0)
+            HStack(spacing: 10) {
+                Button(action: onToggleMap) {
+                    Image(systemName: isShowingMap ? "map.fill" : "map")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .hoverHighlight()
+                .disabled(row.isBlank)
+                .help(isShowingMap ? "Hide Map" : "Show on Map")
+                .accessibilityLabel(isShowingMap ? "Hide Map" : "Show on Map")
+                DeleteRowButton(fieldName: "address", action: onDelete)
             }
-            .buttonStyle(.plain)
-            .disabled(row.isBlank)
-            .help(isShowingMap ? "Hide Map" : "Show on Map")
-            .accessibilityLabel(isShowingMap ? "Hide Map" : "Show on Map")
         }
         .padding(.vertical, 8)
-        .modifier(ContactFieldCopy(value: row.mailingText, fieldName: "postal address"))
+        .hoverableRow()
     }
 }
 
@@ -152,19 +291,16 @@ struct ServiceRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(kind)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: labelColumnWidth, alignment: .leading)
-            TextField("", text: $row.service, prompt: Text("Service"))
-                .frame(maxWidth: 110)
-            TextField("", text: $row.username, prompt: Text("Username"))
+            RowTitle(kind)
+            FittedTextField(text: $row.service, prompt: "Service", fieldName: "service")
+            FittedTextField(text: $row.username, prompt: "Username", fieldName: "username")
+            CopyButton(value: row.username, fieldName: kind.lowercased())
+            Spacer(minLength: 0)
             DeleteRowButton(fieldName: kind.lowercased(), action: onDelete)
         }
-        .textFieldStyle(.plain)
-        .labelsHidden()
         .padding(.vertical, 8)
-        .modifier(ContactFieldCopy(value: row.username, fieldName: kind.lowercased()))
+        .fixedSize(horizontal: false, vertical: true)
+        .hoverableRow()
     }
 }
 
@@ -182,21 +318,19 @@ struct DateRow: View {
             if let label {
                 LabelMenu(label: label, options: ContactLabels.date)
             } else {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: labelColumnWidth, alignment: .leading)
+                RowTitle(title)
             }
             DatePicker("", selection: dateBinding, displayedComponents: .date)
                 .labelsHidden()
+            CopyButton(value: components.displayText, fieldName: title.lowercased())
             Toggle("Year", isOn: yearBinding)
                 .toggleStyle(.checkbox)
                 .font(.caption)
-            Spacer()
+            Spacer(minLength: 0)
             DeleteRowButton(fieldName: title.lowercased(), action: onDelete)
         }
         .padding(.vertical, 8)
-        .modifier(ContactFieldCopy(value: components.displayText, fieldName: title.lowercased()))
+        .hoverableRow()
     }
 
     private var dateBinding: Binding<Date> {
@@ -220,49 +354,5 @@ struct DateRow: View {
             get: { components.year != nil },
             set: { components.year = $0 ? Self.calendar.component(.year, from: Date()) : nil }
         )
-    }
-}
-
-/// Adds a trailing copy button that appears on hover. Copying animates the icon.
-struct ContactFieldCopy: ViewModifier {
-    let value: String
-    let fieldName: String
-
-    @State private var isHovered = false
-    @State private var isCopied = false
-    @State private var copyCount = 0
-    @State private var resetTask: Task<Void, Never>?
-    @FocusState private var isCopyFocused: Bool
-
-    func body(content: Content) -> some View {
-        HStack(spacing: 8) {
-            content
-            Button(action: copy) {
-                Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                    .foregroundStyle(isCopied ? Color.green : Color.primary)
-                    .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(.bounce, value: copyCount)
-            }
-            .buttonStyle(.plain)
-            .focused($isCopyFocused)
-            .help("Copy \(fieldName)")
-            .accessibilityLabel("Copy \(fieldName)")
-            .opacity(isHovered || isCopyFocused || isCopied ? 1 : 0)
-        }
-        .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
-    }
-
-    private func copy() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
-        copyCount += 1
-        withAnimation { isCopied = true }
-        resetTask?.cancel()
-        resetTask = Task {
-            try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
-            withAnimation { isCopied = false }
-        }
     }
 }
