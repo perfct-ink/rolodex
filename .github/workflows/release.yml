@@ -1,0 +1,228 @@
+# Builds Rolodex on a GitHub-hosted Mac and attaches it to every GitHub release.
+#
+#   release published     -> Rolodex-<version>.dmg attached to that release
+#   manual run (tag)      -> same, for an existing release (re-publish an old one)
+#   PR touching this file -> dry run; the .dmg is a workflow artifact (Actions tab)
+#
+# Without signing secrets the app is signed ad hoc, so the first launch on
+# another Mac needs right-click > Open. Add these repository (or organization)
+# secrets to get a Developer ID signed and notarized build that opens normally:
+#
+#   MACOS_CERTIFICATE_P12       base64 of a "Developer ID Application" .p12
+#   MACOS_CERTIFICATE_PASSWORD  password of that .p12
+#   APPLE_TEAM_ID               e.g. K2F4FTM2XQ
+#   APPLE_ID                    Apple ID email used for notarization
+#   APPLE_APP_PASSWORD          app-specific password for that Apple ID
+#
+# Optional: PERFCT_INK_DEPLOY_TOKEN (a fine-grained token with Contents
+# read/write on perfct-ink/perfct.ink) rebuilds perfctink.com right after the
+# upload, so the new download link shows up immediately instead of at the
+# site's next scheduled rebuild.
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and attach to
+        required: true
+  pull_request:
+    paths: [.github/workflows/release.yml]
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: Rolodex
+  # Bundles to ship, one per line, relative to the repo root.
+  ARTIFACTS: |
+    build/DerivedData/Build/Products/Release/Rolodex.app
+
+jobs:
+  release:
+    runs-on: macos-26
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_ID != '' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || '' }}
+
+      - name: Version
+        run: |
+          if [ -n "$TAG" ]; then VERSION="${TAG#v}"; else VERSION="0.0.0-${GITHUB_SHA::7}"; fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          xcodebuild -version
+
+      - name: Build
+        run: |
+          xcodebuild -project "Rolodex.xcodeproj" -scheme "Rolodex" -configuration Release -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= build
+
+      - name: Stamp version
+        run: |
+          # Release tags like v1.4.2 become the app's version; other tags keep the project's.
+          if [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            while IFS= read -r a; do
+              [ -n "$a" ] || continue
+              plutil -replace CFBundleShortVersionString -string "$VERSION" "$a/Contents/Info.plist"
+              plutil -replace CFBundleVersion -string "$GITHUB_RUN_NUMBER" "$a/Contents/Info.plist"
+            done <<< "$ARTIFACTS"
+          fi
+
+      - name: Import Developer ID certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | grep -m1 'Developer ID Application' | sed -E 's/.*"(.*)"/\1/')"
+          [ -n "$IDENTITY" ] || { echo "::error::No Developer ID Application identity in MACOS_CERTIFICATE_P12"; exit 1; }
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Sign
+        run: |
+          # Inside-out: nested Mach-O files and bundles first, deepest first, then the
+          # bundle itself. Existing entitlements (sandbox, extensions) are kept.
+          IDENTITY="${SIGN_IDENTITY:--}"
+          FLAGS=(--force --preserve-metadata=entitlements,requirements,flags --sign "$IDENTITY")
+          [ "$IDENTITY" = "-" ] || FLAGS+=(--timestamp --options runtime)
+          while IFS= read -r a; do
+            [ -n "$a" ] || continue
+            [ -d "$a" ] || { echo "::error::Build did not produce $a"; exit 1; }
+            find "$a" -mindepth 1 \( -type d \( -name '*.app' -o -name '*.appex' -o -name '*.framework' \
+                -o -name '*.xpc' -o -name '*.component' -o -name '*.vst3' -o -name '*.plugin' \) \
+                -o -type f \( -name '*.dylib' -o -perm -u+x \) \) -print0 |
+              while IFS= read -r -d '' p; do
+                if [ -f "$p" ] && ! file -b "$p" | grep -q 'Mach-O'; then continue; fi
+                printf '%s\t%s\n' "$(tr -cd / <<< "$p" | wc -c)" "$p"
+              done | sort -rn | cut -f2- |
+              while IFS= read -r p; do codesign "${FLAGS[@]}" "$p"; done
+            codesign "${FLAGS[@]}" "$a"
+            codesign --verify --deep --strict --verbose=2 "$a"
+          done <<< "$ARTIFACTS"
+
+      - name: Package
+        run: |
+          DMG="dist/$APP_NAME-$VERSION.dmg"
+          mkdir -p dist stage
+          while IFS= read -r a; do
+            [ -n "$a" ] || continue
+            ditto "$a" "stage/$(basename "$a")"
+          done <<< "$ARTIFACTS"
+          if ls stage | grep -q '\.app$'; then ln -s /Applications stage/Applications; fi
+          hdiutil create -volname "$APP_NAME" -srcfolder stage -ov -format UDZO "$DMG" -quiet
+          [ -z "$SIGN_IDENTITY" ] || codesign --sign "$SIGN_IDENTITY" --timestamp "$DMG"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Notarize
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "$DMG" --wait \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$TEAM_ID"
+          xcrun stapler staple "$DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.VERSION }}
+          path: dist/*
+
+      - name: Attach to release
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/* --clobber
+
+      - name: Rebuild perfctink.com
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ secrets.PERFCT_INK_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "PERFCT_INK_DEPLOY_TOKEN not set; the site picks this up at its next scheduled rebuild."; exit 0; fi
+          gh api repos/perfct-ink/perfct.ink/dispatches -f event_type=app-released \
+            -f "client_payload[repo]=$GITHUB_REPOSITORY" -f "client_payload[tag]=$TAG"
+
+  # Mac App Store: archives with the project's own signing and uploads the build
+  # to App Store Connect (TestFlight / review), on full releases only. Skipped
+  # until these secrets are set:
+  #   APP_STORE_CONNECT_API_KEY        base64 of the .p8 API key (App Manager or Admin role)
+  #   APP_STORE_CONNECT_API_KEY_ID     the key's ID
+  #   APP_STORE_CONNECT_ISSUER_ID      the issuer ID shown above the keys list
+  #   APPLE_TEAM_ID                    (shared with the job above)
+  # Signing certificates and profiles are created and managed by Xcode through
+  # the API key (-allowProvisioningUpdates), so no .p12 is needed here.
+  app-store:
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: macos-26
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      HAS_ASC: ${{ secrets.APP_STORE_CONNECT_API_KEY != '' }}
+    steps:
+      - name: Check for App Store Connect secrets
+        if: env.HAS_ASC != 'true'
+        run: echo "APP_STORE_CONNECT_API_KEY not set; skipping the App Store upload."
+
+      - uses: actions/checkout@v5
+        if: env.HAS_ASC == 'true'
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Archive and upload to App Store Connect
+        if: env.HAS_ASC == 'true'
+        env:
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::App Store versions must be numeric (e.g. v1.4.2); got $TAG"; exit 1
+          fi
+          KEY="$RUNNER_TEMP/AuthKey.p8"
+          echo "$ASC_KEY" | base64 --decode > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY"
+                -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          xcodebuild -project Rolodex.xcodeproj -scheme Rolodex -configuration Release \
+            -archivePath build/Rolodex.xcarchive "${AUTH[@]}" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" archive
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/Rolodex.xcarchive \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath build/app-store "${AUTH[@]}"
+          rm -f "$KEY"
