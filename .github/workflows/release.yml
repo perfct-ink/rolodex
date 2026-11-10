@@ -167,3 +167,62 @@ jobs:
           if [ -z "$GH_TOKEN" ]; then echo "PERFCT_INK_DEPLOY_TOKEN not set; the site picks this up at its next scheduled rebuild."; exit 0; fi
           gh api repos/perfct-ink/perfct.ink/dispatches -f event_type=app-released \
             -f "client_payload[repo]=$GITHUB_REPOSITORY" -f "client_payload[tag]=$TAG"
+
+  # Mac App Store: archives with the project's own signing and uploads the build
+  # to App Store Connect (TestFlight / review), on full releases only. Skipped
+  # until these secrets are set:
+  #   APP_STORE_CONNECT_API_KEY        base64 of the .p8 API key (App Manager or Admin role)
+  #   APP_STORE_CONNECT_API_KEY_ID     the key's ID
+  #   APP_STORE_CONNECT_ISSUER_ID      the issuer ID shown above the keys list
+  #   APPLE_TEAM_ID                    (shared with the job above)
+  # Signing certificates and profiles are created and managed by Xcode through
+  # the API key (-allowProvisioningUpdates), so no .p12 is needed here.
+  app-store:
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: macos-26
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      HAS_ASC: ${{ secrets.APP_STORE_CONNECT_API_KEY != '' }}
+    steps:
+      - name: Check for App Store Connect secrets
+        if: env.HAS_ASC != 'true'
+        run: echo "APP_STORE_CONNECT_API_KEY not set; skipping the App Store upload."
+
+      - uses: actions/checkout@v5
+        if: env.HAS_ASC == 'true'
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Archive and upload to App Store Connect
+        if: env.HAS_ASC == 'true'
+        env:
+          ASC_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::App Store versions must be numeric (e.g. v1.4.2); got $TAG"; exit 1
+          fi
+          KEY="$RUNNER_TEMP/AuthKey.p8"
+          echo "$ASC_KEY" | base64 --decode > "$KEY"
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$KEY"
+                -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+          xcodebuild -project Rolodex.xcodeproj -scheme Rolodex -configuration Release \
+            -archivePath build/Rolodex.xcarchive "${AUTH[@]}" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" archive
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/Rolodex.xcarchive \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath build/app-store "${AUTH[@]}"
+          rm -f "$KEY"
