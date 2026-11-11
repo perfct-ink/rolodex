@@ -25,7 +25,7 @@ Contacts framework has no API for them), so those are stored locally in
 1. Open `Rolodex.xcodeproj` in Xcode.
 2. Select the `Rolodex` target → **Signing & Capabilities** and set your own
    Team (a free personal team is fine for local use). You can leave the
-   bundle identifier (`com.rolodex.app`) as-is unless Xcode flags a
+   bundle identifier (`org.perfectink.rolodex`) as-is unless Xcode flags a
    conflict.
 3. Build and run (⌘R). On first launch, macOS will prompt for Contacts
    access — approve it. If you ever deny it, the app shows a button that

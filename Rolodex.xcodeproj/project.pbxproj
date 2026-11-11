@@ -26,6 +26,7 @@
 		7A7424B452349DD29195E94E /* ContactsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77CB8AAC11185AB4BA0BC578 /* ContactsViewModel.swift */; };
 		7AA7827079E96EE9DB8D943D /* RolodexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0688172A94A75E2BE64B47 /* RolodexApp.swift */; };
 		877E69DB665240850FDFDFE9 /* GroupEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65A827273DB9C76EA0473E93 /* GroupEditorSheet.swift */; };
+		AF0000000000000000000021 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AF0000000000000000000020 /* PrivacyInfo.xcprivacy */; };
 		A7C339B7464A6BBCAC1125AC /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8F86ADED6C00D1CD9A9A59B9 /* Assets.xcassets */; };
 		ABBDCECB499D9C978F809D09 /* ContactListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 058A41D8CBE321D58758E0E1 /* ContactListView.swift */; };
 		AC6A9B84B49CB114DAD350E8 /* ContactDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF3A9F8F88F7D01D9CAC67C /* ContactDetailView.swift */; };
@@ -47,6 +48,7 @@
 		77CB8AAC11185AB4BA0BC578 /* ContactsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactsViewModel.swift; sourceTree = "<group>"; };
 		7C056EA3E47C2DFCDD368FAD /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		8762F625963AE2A5A9F558DA /* SmartGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartGroup.swift; sourceTree = "<group>"; };
+		AF0000000000000000000020 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		8F86ADED6C00D1CD9A9A59B9 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		9EC8C3F09F3E6278BF50C26F /* PermissionStateViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionStateViews.swift; sourceTree = "<group>"; };
 		A31CFD3F9947F7695A53DFD6 /* SmartGroupEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartGroupEditorView.swift; sourceTree = "<group>"; };
@@ -168,6 +170,7 @@
 				5C0688172A94A75E2BE64B47 /* RolodexApp.swift */,
 				5DD227B8A942B0A5BA5EE46A /* Info.plist */,
 				535A6AF56AAF68D5C99DAB6A /* Rolodex.entitlements */,
+				AF0000000000000000000020 /* PrivacyInfo.xcprivacy */,
 				8F86ADED6C00D1CD9A9A59B9 /* Assets.xcassets */,
 				044A751AC2EB59455AE2C335 /* Models */,
 				0CB47B337154656292EC5A01 /* Persistence */,
@@ -238,6 +241,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A7C339B7464A6BBCAC1125AC /* Assets.xcassets in Resources */,
+				AF0000000000000000000021 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -308,7 +312,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.rolodex.app;
+				PRODUCT_BUNDLE_IDENTIFIER = org.perfectink.rolodex;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -344,7 +348,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.rolodex.app;
+				PRODUCT_BUNDLE_IDENTIFIER = org.perfectink.rolodex;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
