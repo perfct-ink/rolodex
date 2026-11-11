@@ -15,7 +15,7 @@
 #   APPLE_APP_PASSWORD          app-specific password for that Apple ID
 #
 # Optional: PERFCT_INK_DEPLOY_TOKEN (a fine-grained token with Contents
-# read/write on perfct-ink/perfct.ink) rebuilds perfctink.com right after the
+# read/write on perfect-ink/perfectink.org) rebuilds perfectink.org right after the
 # upload, so the new download link shows up immediately instead of at the
 # site's next scheduled rebuild.
 name: Release
@@ -159,13 +159,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" dist/* --clobber
 
-      - name: Rebuild perfctink.com
+      - name: Rebuild perfectink.org
         if: env.TAG != ''
         env:
           GH_TOKEN: ${{ secrets.PERFCT_INK_DEPLOY_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then echo "PERFCT_INK_DEPLOY_TOKEN not set; the site picks this up at its next scheduled rebuild."; exit 0; fi
-          gh api repos/perfct-ink/perfct.ink/dispatches -f event_type=app-released \
+          gh api repos/perfect-ink/perfectink.org/dispatches -f event_type=app-released \
             -f "client_payload[repo]=$GITHUB_REPOSITORY" -f "client_payload[tag]=$TAG"
 
   # Mac App Store: archives with the project's own signing and uploads the build
